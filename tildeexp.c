@@ -26,9 +26,10 @@ extern int errno;
 
 extern char *strerror ();
 
-#if 1 /*gcc*/
-#define INITFUNC __attribute__((constructor))
-#define FINIFUNC __attribute__((destructor))
+#ifndef __attribute__
+#  if __GNUC__ < 2 || (__GNUC__ == 2 && __GNUC_MINOR__ < 8)
+#    define __attribute__(x)
+#  endif
 #endif
 
 static char *(*s_preexp_hook_save)(char*);
@@ -64,14 +65,14 @@ tildeexp_tilde_expansions(text)
   return result;
 }
 
-INITFUNC void
+static __attribute__((constructor)) void
 tildeexp_init()
 {
   s_preexp_hook_save = tilde_expansion_preexpansion_hook;
   tilde_expansion_preexpansion_hook = tildeexp_tilde_expansions;
 }
 
-FINIFUNC void
+static __attribute__((destructor)) void
 tildeexp_fini()
 {
   tilde_expansion_preexpansion_hook = s_preexp_hook_save;
