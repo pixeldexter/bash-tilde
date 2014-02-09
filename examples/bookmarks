@@ -1,0 +1,126 @@
+# -*- mode: shell-script -*-
+
+declare -A BASH_DIR_ALIASES
+declare -A _bookmark_persistent
+declare -r _bookmark_savefile=~/.bash_bookmark
+
+
+#
+# _bookmark-write name [dir]
+# if dir is unset, this means bookmark is deleted
+function _bookmark-write()
+{
+    echo "$1='$2'" >> $_bookmark_savefile
+}
+
+#
+# bookmark-directory-add [name [dir]]
+# -f force
+# -p make persistent
+function _bookmark-directory-add()
+{
+    local opt opt_force opt_persist
+    local OPTIND=1
+    while getopts "pf" opt ; do
+	case "$opt" in
+	    f) opt_force="y" ;;
+	    p) opt_persist="y" ;;
+	    *) echo "Invalid option" 1>&2
+		return 22
+		;;
+	esac
+    done
+    shift $(($OPTIND - 1))
+
+    local dir=${1:-${PWD}}
+    [[ "${dir}" == "-" ]] && dir=${PWD}
+    [[ -z "${dir}" ]] && return 22
+    dir=${dir%%/} # canonicalize
+
+    local name="${2:-${dir##*/}}"
+    if [[ -z "$opt_force" ]] ; then
+	if [[ -z "$2" && -n "${BASH_DIR_ALIASES[$name]}" ]] ; then
+	    echo "Alias $name is already set to ${BASH_DIR_ALIASES[$name]}." 1>&2
+	    echo "Add -f to overwrite or choose a different alias."          1>&2
+	    return 17
+	fi
+    fi
+    # TODO: sanitize name
+
+    BASH_DIR_ALIASES[$name]="${dir}"
+    if [[ -n "$opt_persist" ]] ; then
+	_bookmark_persistent[$name]="${dir}"
+	_bookmark-write "${name}" "${dir}"
+    fi
+}
+
+#
+# bookmark-directory-rm name
+function _bookmark-directory-rm()
+{
+    [[ -z "$1" ]] && return 22
+    unset BASH_DIR_ALIASES[$1]
+
+    if [[ -n "${_bookmark_persistent[$1]}" ]] ; then
+	unset _bookmark_persistent[$1]
+	_bookmark-write "$1"
+    fi
+}
+
+function _bookmark-load()
+{
+    [[ -r "$_bookmark_savefile" ]] || return 2
+
+    local line key value count=0
+    _bookmark_persistent=()
+    while read line ; do
+	value=${line#*=}
+	key=${line%=$value}
+	eval "_bookmark_persistent[\$key]=$value"
+	if [[ -n "${_bookmark_persistent[$key]}" ]] ; then
+	    BASH_DIR_ALIASES[$key]="${_bookmark_persistent[$key]}"
+	else
+	    unset _bookmark_persistent[$key]
+	fi
+	: $((count++))
+    done < $_bookmark_savefile
+
+    # return EFBIG is the list needs to be GC'ed
+    [[ $count -gt  $((${#_bookmark_persistent[@]}*2)) ]] && return 27
+    return 0
+}
+
+function _bookmark-save()
+{
+    >| "${_bookmark_savefile}.tmp"
+    for key in "${!_bookmark_persistent[@]}" ; do
+	echo "$key='${_bookmark_persistent[$key]}'" >> "${_bookmark_savefile}.tmp"
+    done && mv "${_bookmark_savefile}.tmp" "${_bookmark_savefile}"
+}
+
+function _bookmark-list()
+{
+    local length=0
+    for key in "Name" "${!_bookmark_persistent[@]}" ; do
+	[[ ${#key} -gt $length ]] && \
+	    length=${#key}
+    done
+    length=$(($length+1))
+
+    printf "%${length}s   %s\n" "Name" "Directory"
+    printf "===================================\n"
+    for key in "${!_bookmark_persistent[@]}" ; do
+	printf "%${length}s   %s\n" "$key" "${_bookmark_persistent[$key]}"
+    done
+    printf "\n"
+}
+
+_bookmark-load
+if [[ $? -eq 27 ]] ; then # need to compact savefile
+    _bookmark-save
+fi
+
+# Neat !
+alias bmk='_bookmark-directory-add'
+alias bmk-rm='_bookmark-directory-rm'
+alias bmk-ls='_bookmark-list'
